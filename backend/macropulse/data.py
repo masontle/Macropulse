@@ -101,9 +101,16 @@ def process_prices(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def frame_fingerprint(frame: pd.DataFrame) -> str:
-    return hashlib.sha256(
-        pd.util.hash_pandas_object(frame, index=True).values.tobytes()
-    ).hexdigest()
+    # Parquet can convert datetime64[s] to datetime64[ms]. Canonical seconds
+    # retain all information in daily trading dates and make round trips stable.
+    canonical = frame.copy()
+    if isinstance(canonical.index, pd.DatetimeIndex):
+        canonical.index = canonical.index.as_unit("s")
+    for column in canonical.columns:
+        if pd.api.types.is_datetime64_any_dtype(canonical[column]):
+            canonical[column] = canonical[column].dt.as_unit("s")
+    values = pd.util.hash_pandas_object(canonical, index=True).to_numpy()
+    return hashlib.sha256(values.tobytes()).hexdigest()
 
 
 def download_prices(data_dir: Path, force: bool = False) -> tuple[pd.DataFrame, dict]:

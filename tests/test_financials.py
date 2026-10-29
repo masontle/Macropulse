@@ -70,3 +70,16 @@ def test_incomplete_market_session_is_excluded():
     after_early_close = completed_sessions("2024-07-01", pd.Timestamp("2024-07-03T17:30:00Z"))
     assert before_close[-1] == pd.Timestamp("2024-07-02")
     assert after_early_close[-1] == pd.Timestamp("2024-07-03")
+
+
+def test_fingerprint_survives_parquet_timestamp_unit_conversion(prices, frame, tmp_path):
+    from macropulse.data import frame_fingerprint
+
+    for name, original in (("prices", prices), ("processed", frame)):
+        path = tmp_path / f"{name}.parquet"
+        original.to_parquet(path)
+        reloaded = pd.read_parquet(path)
+        assert frame_fingerprint(original) == frame_fingerprint(reloaded)
+        altered = reloaded.copy()
+        altered.iloc[100, altered.columns.get_loc("close")] += 1
+        assert frame_fingerprint(original) != frame_fingerprint(altered)
