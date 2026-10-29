@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     batch_size: int = Field(default=4, ge=1, le=32)
     torch_threads: int = Field(default=4, ge=1, le=32)
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    @field_validator("data_dir")
+    @classmethod
+    def resolve_data_dir(cls, value: Path) -> Path:
+        return value if value.is_absolute() else ROOT / value
 
     @property
     def database(self) -> Path:

@@ -52,7 +52,7 @@ Set-Location 'C:\Users\mason\OneDrive\Desktop\Personal Coding Stuff\Macropulse'
 Open **http://127.0.0.1:8000**. API documentation: **http://127.0.0.1:8000/docs**.
 The built dashboard and saved research are served by one process. Stop with Ctrl+C.
 Alternatively run `powershell -ExecutionPolicy Bypass -File .\Start-MacroPulse.ps1`.
-The launcher uses an existing virtual environment and builds the frontend if needed.
+The launcher uses an existing virtual environment and rebuilds the frontend when source files or build inputs change.
 
 ## Fresh setup
 
@@ -179,3 +179,21 @@ See [third-party notices](THIRD_PARTY_NOTICES.md) and
 **Portfolio description:** Built a reproducible financial volatility forecasting
 platform integrating TimesFM 3 foundation-model inference, XGBoost, causal
 walk-forward evaluation, a FastAPI/SQLite research service, and an interactive React dashboard.
+
+
+## Senior review — October 29, 2026
+
+The second implementation pass adds a clearer forecast-first overview, model selection,
+volatility/price views, accessible explanations, date shortcuts, filtered CSV exports,
+complete history pagination, browser-history navigation, and useful partial-data states.
+Plotly loads separately, reducing the initial JavaScript bundle from about 1,399 KB
+to 272 KB before compression. Chart zoom survives ordinary data/control updates.
+
+The research audit confirmed the specified five-session volatility formula and
+fifth-step TimesFM alignment. Experiments now rebuild from fingerprint-verified raw
+prices; historical market requests use the selected experiment's immutable snapshot.
+Cache writes are atomic per artifact, column schemas and volume are validated, and
+corrupt data fail explicitly. Training grids do not move when an observation is
+invalid; comparison metrics reject unequal origins/outcomes, and validation prediction
+artifacts preserve how supervised parameters were selected. See
+[the full review](docs/senior-review.md) for details and remaining research limits.

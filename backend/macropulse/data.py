@@ -8,6 +8,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import exchange_calendars as xcals
 import numpy as np
@@ -60,20 +61,38 @@ def future_sessions(origin: str | pd.Timestamp, horizon: int = 5) -> list[str]:
 
 
 def validate_prices(prices: pd.DataFrame, expected: pd.DatetimeIndex | None = None) -> None:
+    required = {"adjusted_close", "close", "volume"}
+    if not required.issubset(prices.columns):
+        raise DataError(f"Missing price columns: {sorted(required.difference(prices.columns))}")
+    if list(prices.columns) != ["adjusted_close", "close", "volume"]:
+        raise DataError("Raw prices must use the canonical adjusted_close, close, volume schema.")
     if len(prices) < 70:
         raise DataError("At least 70 completed trading sessions are required.")
     if not isinstance(prices.index, pd.DatetimeIndex):
         raise DataError("Prices must use a DatetimeIndex.")
+    if prices.index.tz is not None or prices.index.hasnans:
+        raise DataError("Trading dates must be timezone-free and contain no missing dates.")
+    if not prices.index.equals(prices.index.normalize()):
+        raise DataError("Trading dates must be normalized to midnight.")
     if prices.index.has_duplicates or not prices.index.is_monotonic_increasing:
         raise DataError("Trading dates must be unique and sorted.")
     for column in ("adjusted_close", "close"):
+        if not pd.api.types.is_numeric_dtype(prices[column]):
+            raise DataError(f"{column} must be numeric.")
         values = prices[column].to_numpy()
         if not np.isfinite(values).all() or (values <= 0).any():
             raise DataError(f"{column} must contain finite, positive prices.")
+    if not pd.api.types.is_numeric_dtype(prices["volume"]):
+        raise DataError("Volume must be numeric.")
+    volume = prices["volume"].to_numpy()
+    if not np.isfinite(volume).all() or (volume < 0).any() or (volume != np.floor(volume)).any():
+        raise DataError("Volume must contain finite, nonnegative whole numbers.")
     if expected is not None:
         missing = expected.difference(prices.index)
         if len(missing):
             raise DataError(f"Missing {len(missing)} NYSE sessions; first: {missing[0].date()}.")
+        if len(prices.index.difference(expected)):
+            raise DataError("Prices contain unexpected trading dates.")
 
 
 def process_prices(prices: pd.DataFrame) -> pd.DataFrame:
@@ -113,6 +132,65 @@ def frame_fingerprint(frame: pd.DataFrame) -> str:
     return hashlib.sha256(values.tobytes()).hexdigest()
 
 
+def atomic_parquet(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        frame.to_parquet(temporary)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_json(value: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(value, indent=2, allow_nan=False), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load_verified_prices(
+    data_dir: Path, provenance: dict | None = None
+) -> tuple[pd.DataFrame, dict]:
+    """Read a fingerprint-verified raw snapshot; never trust a mutable processed cache."""
+    try:
+        saved = (
+            provenance
+            if provenance is not None
+            else json.loads((data_dir / "raw" / "provenance.json").read_text(encoding="utf-8"))
+        )
+        if not isinstance(saved, dict):
+            raise DataError("Dataset provenance must be a JSON object.")
+        digest = saved.get("sha256", "")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+        ):
+            raise DataError("Dataset provenance has an invalid SHA-256 fingerprint.")
+        name = f"spy-{digest[:16]}.parquet" if provenance is not None else "spy.parquet"
+        prices = pd.read_parquet(data_dir / "raw" / name)
+        validate_prices(prices)
+        if frame_fingerprint(prices) != digest:
+            raise DataError(
+                "Dataset fingerprint mismatch. Run macropulse refresh --force to repair the cache."
+            )
+        if saved.get("last_session") != prices.index[-1].strftime("%Y-%m-%d"):
+            raise DataError("Dataset dates do not match their provenance.")
+        if saved.get("rows") != len(prices):
+            raise DataError("Dataset row count does not match its provenance.")
+        return prices, saved
+    except DataError:
+        raise
+    except (OSError, ValueError, KeyError) as exc:
+        raise DataError(
+            "The verified market snapshot is missing or unreadable. Refresh market data."
+        ) from exc
+
+
 def download_prices(data_dir: Path, force: bool = False) -> tuple[pd.DataFrame, dict]:
     import yfinance as yf
 
@@ -126,16 +204,25 @@ def download_prices(data_dir: Path, force: bool = False) -> tuple[pd.DataFrame, 
         raise DataError("No completed sessions found.")
     path = raw / "spy.parquet"
     metadata_path = raw / "provenance.json"
-    cached_meta = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    cached_meta = {}
+    if metadata_path.exists() and not force:
+        try:
+            cached_meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(cached_meta, dict):
+                raise ValueError("Cache provenance must be a JSON object.")
+        except (OSError, ValueError) as exc:
+            raise DataError(
+                "Cache provenance is unreadable. Run macropulse refresh --force."
+            ) from exc
     if (
         path.exists()
         and not force
         and cached_meta.get("last_session") == expected[-1].strftime("%Y-%m-%d")
     ):
-        prices = pd.read_parquet(path)
+        prices, cached_meta = load_verified_prices(data_dir)
         validate_prices(prices, expected)
         frame = process_prices(prices)
-        frame.to_parquet(processed / "spy.parquet")
+        atomic_parquet(frame, processed / "spy.parquet")
         return frame, cached_meta
     # end is exclusive; auto_adjust=False preserves raw close and total-return adjusted close.
     downloaded = yf.download(
@@ -176,10 +263,15 @@ def download_prices(data_dir: Path, force: bool = False) -> tuple[pd.DataFrame, 
         ),
         "yfinance_version": yf.__version__,
     }
-    prices.to_parquet(path)
+    atomic_parquet(prices, path)
     # Immutable snapshots permit reproduction after a later vendor refresh.
-    prices.to_parquet(raw / f"spy-{fingerprint[:16]}.parquet")
-    metadata_path.write_text(json.dumps(metadata, indent=2))
+    snapshot = raw / f"spy-{fingerprint[:16]}.parquet"
+    if snapshot.exists():
+        if frame_fingerprint(pd.read_parquet(snapshot)) != fingerprint:
+            raise DataError("An immutable snapshot was altered. Restore it before continuing.")
+    else:
+        atomic_parquet(prices, snapshot)
     frame = process_prices(prices)
-    frame.to_parquet(processed / "spy.parquet")
+    atomic_parquet(frame, processed / "spy.parquet")
+    atomic_json(metadata, metadata_path)
     return frame, metadata

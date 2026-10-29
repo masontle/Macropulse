@@ -1,35 +1,77 @@
 import json
 import time
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
-from importlib.metadata import version
+from datetime import UTC, date, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from macropulse.config import Settings
+from macropulse.config import Settings, settings
 from macropulse.data import FEATURES, frame_fingerprint, future_sessions
 from macropulse.models import Forecast, PersistenceForecaster, TimesFM3Forecaster, XGBoostForecaster
 
 
+def package_versions() -> dict:
+    versions = {}
+    for name in (
+        "macropulse",
+        "pandas",
+        "numpy",
+        "xgboost",
+        "scikit-learn",
+        "yfinance",
+        "timesfm",
+        "torch",
+        "pyarrow",
+        "exchange-calendars",
+    ):
+        try:
+            versions[name] = version(name)
+        except PackageNotFoundError:
+            versions[name] = "not installed"
+    return versions
+
+
+class XGBoostParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_depth: int = Field(ge=1, le=12, strict=True)
+    n_estimators: int = Field(ge=1, le=2000, strict=True)
+    learning_rate: float = Field(gt=0, le=1, allow_inf_nan=False)
+
+
 class ExperimentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     validation_start: str = "2022-01-01"
     test_start: str = "2024-01-01"
     origin_stride: int = Field(default=5, ge=5)
     refit_every: int = Field(default=20, ge=1)
     max_test_origins: int | None = Field(default=None, ge=1)
     include_timesfm: bool = True
-    context_length: int = Field(default=256, ge=32, le=15360)
-    batch_size: int = Field(default=4, ge=1, le=32)
+    context_length: int = Field(default=settings.context_length, ge=32, le=15360)
+    batch_size: int = Field(default=settings.batch_size, ge=1, le=32)
     checkpoint_revision: str | None = None
     candidates: list[dict] = [
         {"max_depth": 2, "n_estimators": 150, "learning_rate": 0.03},
         {"max_depth": 3, "n_estimators": 200, "learning_rate": 0.03},
         {"max_depth": 2, "n_estimators": 250, "learning_rate": 0.02},
     ]
+
+    @field_validator("validation_start", "test_start")
+    @classmethod
+    def iso_dates(cls, value: str) -> str:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() != value:
+            raise ValueError("Split dates must use YYYY-MM-DD.")
+        return value
+
+    @field_validator("candidates")
+    @classmethod
+    def valid_parameters(cls, values: list[dict]) -> list[dict]:
+        return [XGBoostParameters.model_validate(value).model_dump() for value in values]
 
     @model_validator(mode="after")
     def check_dates(self):
@@ -43,18 +85,27 @@ class ExperimentConfig(BaseModel):
 def forecast_origins(
     frame: pd.DataFrame, start: str, end: str | None, stride: int = 5
 ) -> pd.DatetimeIndex:
-    eligible = frame.dropna(subset=[*FEATURES, "target", "target_end"])
-    eligible = eligible.loc[start:]
+    if stride < 5:
+        raise ValueError("Primary forecast origins must be at least five sessions apart.")
+    eligible = frame.loc[start:]
     if end:
-        eligible = eligible.loc[
-            (eligible.index < pd.Timestamp(end)) & (eligible["target_end"] < pd.Timestamp(end))
-        ]
-    return eligible.index[::stride]
+        eligible = eligible.loc[eligible.index < pd.Timestamp(end)]
+    # Select on the session grid first: dropping a bad row must not shift all later origins.
+    eligible = eligible.iloc[::stride].dropna(subset=[*FEATURES, "target", "target_end"])
+    if end:
+        eligible = eligible.loc[eligible["target_end"] < pd.Timestamp(end)]
+    finite = np.isfinite(eligible[[*FEATURES, "target"]].to_numpy()).all(axis=1)
+    return eligible.index[finite]
 
 
 def metrics(actual: np.ndarray, predicted: np.ndarray) -> dict:
     actual, predicted = np.asarray(actual, dtype=float), np.asarray(predicted, dtype=float)
-    if actual.shape != predicted.shape or actual.size == 0:
+    if (
+        actual.ndim != 1
+        or predicted.ndim != 1
+        or actual.shape != predicted.shape
+        or actual.size == 0
+    ):
         raise ValueError("Metrics require nonempty aligned arrays.")
     if not np.isfinite(actual).all() or not np.isfinite(predicted).all():
         raise ValueError("Metrics require finite observations.")
@@ -80,6 +131,7 @@ def walk_forward_xgb(
 
 
 def summarize(predictions: pd.DataFrame) -> list[dict]:
+    validate_predictions(predictions)
     output = []
     for regime in ("all", "calm", "volatile"):
         subset = predictions if regime == "all" else predictions[predictions["regime"] == regime]
@@ -106,12 +158,44 @@ def summarize(predictions: pd.DataFrame) -> list[dict]:
     return output
 
 
+def validate_predictions(table: pd.DataFrame) -> None:
+    required = {
+        "origin",
+        "target_end",
+        "model",
+        "prediction",
+        "raw_prediction",
+        "actual",
+        "latency_ms",
+        "regime",
+    }
+    if not required.issubset(table.columns) or table.empty:
+        raise ValueError("A complete prediction table is required.")
+    if table.duplicated(["origin", "model"]).any():
+        raise ValueError("Duplicate forecasts would overweight an origin.")
+    numeric = table[["prediction", "raw_prediction", "actual", "latency_ms"]].to_numpy()
+    if (
+        not np.isfinite(numeric).all()
+        or (table[["prediction", "actual", "latency_ms"]] < 0).any().any()
+    ):
+        raise ValueError("Predictions require finite, nonnegative volatility and latency.")
+    if (table["target_end"] <= table["origin"]).any():
+        raise ValueError("Forecast targets must end after their origin.")
+    origin_sets = table.groupby("model")["origin"].agg(set)
+    if "persistence" not in origin_sets.index or any(s != origin_sets.iloc[0] for s in origin_sets):
+        raise ValueError("All models require identical origins and a persistence baseline.")
+    aligned = table.groupby("origin")[["actual", "target_end", "regime"]].nunique(dropna=False)
+    if not aligned.eq(1).all().all():
+        raise ValueError("Models must use identical outcomes, target dates, and regimes.")
+
+
 @dataclass
 class ExperimentResult:
     metadata: dict
     predictions: pd.DataFrame
     scores: list[dict]
     forecasts: dict
+    validation_predictions: pd.DataFrame | None = None
 
 
 def run_experiment(
@@ -128,12 +212,28 @@ def run_experiment(
             "The supplied data do not cover the configured validation and test periods."
         )
     candidates = []
-    for params in cfg.candidates:
-        predictions, _ = walk_forward_xgb(frame, validation, params, cfg.refit_every)
+    validation_rows = []
+    for candidate_id, params in enumerate(cfg.candidates):
+        predictions, training_ends = walk_forward_xgb(frame, validation, params, cfg.refit_every)
         score = metrics(
             frame.loc[validation, "target"].to_numpy(), np.array([p.value for p in predictions])
         )
         candidates.append({"params": params, **score})
+        validation_rows.extend(
+            [
+                {
+                    "candidate": candidate_id,
+                    "origin": origin.strftime("%Y-%m-%d"),
+                    "target_end": frame.loc[origin, "target_end"].strftime("%Y-%m-%d"),
+                    "actual": float(frame.loc[origin, "target"]),
+                    "prediction": prediction.value,
+                    "train_label_end": train_end,
+                }
+                for origin, prediction, train_end in zip(
+                    validation, predictions, training_ends, strict=True
+                )
+            ]
+        )
     best = min(candidates, key=lambda row: row["mae"])["params"]
     print(f"Validation complete: {len(validation)} origins; selected {best}", flush=True)
     xgb_predictions, train_ends = walk_forward_xgb(frame, test, best, cfg.refit_every)
@@ -227,12 +327,15 @@ def run_experiment(
         "test_first_origin": test[0].strftime("%Y-%m-%d"),
         "test_last_origin": test[-1].strftime("%Y-%m-%d"),
         "seed": 42,
+        "protocol_version": 2,
+        "target_definition": {
+            "horizon_sessions": 5,
+            "annualization": 252,
+            "units": "annualized decimal volatility",
+        },
         "feature_importance": latest_xgb.feature_importance(),
         "duration_seconds": time.perf_counter() - started,
-        "versions": {
-            p: version(p)
-            for p in ["macropulse", "pandas", "numpy", "xgboost", "scikit-learn", "yfinance"]
-        },
+        "versions": package_versions(),
         "methodology": (
             "Expanding-window, labels matured by refit origin; "
             "validation-only selection; no test-based tuning."
@@ -246,13 +349,15 @@ def run_experiment(
             "Batched TimesFM wall time is amortized per origin."
         ),
     }
-    return ExperimentResult(metadata, table, scores, payload)
+    return ExperimentResult(metadata, table, scores, payload, pd.DataFrame(validation_rows))
 
 
 def export_experiment(result: ExperimentResult, directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     result.predictions.to_parquet(directory / "predictions.parquet", index=False)
     result.predictions.to_csv(directory / "predictions.csv", index=False)
+    if result.validation_predictions is not None:
+        result.validation_predictions.to_csv(directory / "validation_predictions.csv", index=False)
     for name, data in (
         ("metadata", result.metadata),
         ("metrics", result.scores),

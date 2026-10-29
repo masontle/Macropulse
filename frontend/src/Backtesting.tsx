@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, X } from "lucide-react";
 import Chart from "./Chart";
 import type { Model, Prediction, Research } from "./types";
-import { colors, names, order, pct, pp } from "./ui";
+import { colors, downloadForecasts, Metric, names, order, pct, pp } from "./ui";
 
 export default function Backtesting({
   research,
@@ -19,6 +19,8 @@ export default function Backtesting({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [regime, setRegime] = useState("all");
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [selected, start, end, regime]);
   const invalid = Boolean(start && end && start > end);
   const available = order.filter(
     (m) => research.metadata.models[m].status === "available",
@@ -32,8 +34,48 @@ export default function Backtesting({
           (!end || p.origin <= end) &&
           (regime === "all" || p.regime === regime),
       );
+  const years = [
+    ...new Set(predictions.map((p) => p.origin.slice(0, 4))),
+  ].sort();
+  const mae = rows.length
+    ? rows.reduce((s, p) => s + Math.abs(p.prediction - p.actual), 0) /
+      rows.length
+    : null;
+  const bias = rows.length
+    ? rows.reduce((s, p) => s + p.prediction - p.actual, 0) / rows.length
+    : null;
+  const pages = Math.max(1, Math.ceil(rows.length / 15));
+  const current = Math.min(page, pages);
+  const tableRows = [...rows]
+    .sort((a, b) => b.origin.localeCompare(a.origin))
+    .slice((current - 1) * 15, current * 15);
   return (
     <>
+      <div className="backtest-summary">
+        <Metric
+          title="MATCHING FORECASTS"
+          value={String(rows.length)}
+          caption={names[selected]}
+        />
+        <Metric
+          title="AVERAGE ERROR"
+          value={mae == null ? "—" : `${pp(mae)} pp`}
+          caption="Absolute error · lower is better"
+        />
+        <Metric
+          title="FORECAST BIAS"
+          value={bias == null ? "—" : `${bias > 0 ? "+" : ""}${pp(bias)} pp`}
+          caption={
+            bias == null
+              ? "No observations"
+              : bias > 0
+                ? "Overestimated volatility"
+                : bias < 0
+                  ? "Underestimated volatility"
+                  : "No average directional error"
+          }
+        />
+      </div>
       <section className="panel">
         <div className="backtest-controls">
           <label>
@@ -89,7 +131,46 @@ export default function Backtesting({
               setRegime("all");
             }}
           >
-            <X size={16} />
+            <X size={16} /> Reset
+          </button>
+        </div>
+        <div className="range-presets">
+          <span>Quick date range</span>
+          <button
+            className={!start && !end ? "active" : ""}
+            onClick={() => {
+              setStart("");
+              setEnd("");
+            }}
+          >
+            All years
+          </button>
+          {years.map((y) => (
+            <button
+              className={
+                start === `${y}-01-01` && end === `${y}-12-31` ? "active" : ""
+              }
+              key={y}
+              onClick={() => {
+                setStart(`${y}-01-01`);
+                setEnd(`${y}-12-31`);
+              }}
+            >
+              {y}
+            </button>
+          ))}
+          <button
+            className="button"
+            onClick={() =>
+              downloadForecasts(
+                rows,
+                `${research.metadata.run_id}-${selected}-filtered`,
+              )
+            }
+            disabled={invalid || !rows.length}
+          >
+            <Download size={14} />
+            Export filtered forecasts
           </button>
         </div>
         {invalid ? (
@@ -135,44 +216,47 @@ export default function Backtesting({
           </>
         )}
       </section>
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Forecast error</h2>
-            <p>Prediction minus outcome · positive values overestimate risk</p>
+      {rows.length > 0 && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Forecast error</h2>
+              <p>
+                Prediction minus outcome · positive values overestimate risk
+              </p>
+            </div>
           </div>
-        </div>
-        <Chart
-          height={240}
-          label="Forecast errors by target end date"
-          data={[
-            {
-              x: rows.map((p) => p.target_end),
-              y: rows.map((p) => (p.prediction - p.actual) * 100),
-              type: "bar",
-              marker: {
-                color: rows.map((p) =>
-                  p.prediction >= p.actual ? "#75dfb2" : "#db8c85",
-                ),
+          <Chart
+            height={240}
+            label="Forecast errors by target end date"
+            data={[
+              {
+                x: rows.map((p) => p.target_end),
+                y: rows.map((p) => (p.prediction - p.actual) * 100),
+                type: "bar",
+                marker: {
+                  color: rows.map((p) =>
+                    p.prediction >= p.actual ? "#75dfb2" : "#db8c85",
+                  ),
+                },
               },
-            },
-          ]}
-          layout={{
-            yaxis: {
-              title: { text: "Error (pp)" },
-              gridcolor: "#1d2834",
-              zerolinecolor: "#4a5c6e",
-            },
-          }}
-        />
-      </section>
+            ]}
+            layout={{
+              yaxis: {
+                title: { text: "Error (pp)" },
+                gridcolor: "#1d2834",
+                zerolinecolor: "#4a5c6e",
+              },
+            }}
+          />
+        </section>
+      )}
       <section className="panel">
         <div className="panel-heading">
           <div>
             <h2>Forecast audit trail</h2>
             <p>
-              Most recent 50 matching observations · full experiment available
-              in CSV
+              Exact dates, predictions, and outcomes for the current selection
             </p>
           </div>
         </div>
@@ -191,27 +275,47 @@ export default function Backtesting({
               </tr>
             </thead>
             <tbody>
-              {rows
-                .slice(-50)
-                .reverse()
-                .map((p) => (
-                  <tr key={p.origin}>
-                    <td>{p.origin}</td>
-                    <td className="muted">{p.target_end}</td>
-                    <td className="numeric">{pct(p.prediction)}</td>
-                    <td className="numeric">{pct(p.actual)}</td>
-                    <td
-                      className={`numeric ${p.prediction >= p.actual ? "positive" : "negative"}`}
-                    >
-                      {pp(p.prediction - p.actual)}
-                    </td>
-                    <td>
-                      <span className="label">{p.regime}</span>
-                    </td>
-                  </tr>
-                ))}
+              {tableRows.map((p) => (
+                <tr key={p.origin}>
+                  <td>{p.origin}</td>
+                  <td className="muted">{p.target_end}</td>
+                  <td className="numeric">{pct(p.prediction)}</td>
+                  <td className="numeric">{pct(p.actual)}</td>
+                  <td
+                    className={`numeric ${p.prediction >= p.actual ? "positive" : "negative"}`}
+                  >
+                    {pp(p.prediction - p.actual)}
+                  </td>
+                  <td>
+                    <span className="label">{p.regime}</span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
+        </div>
+        <div className="pagination">
+          <span>
+            {rows.length
+              ? `${(current - 1) * 15 + 1}–${Math.min(current * 15, rows.length)} of ${rows.length} forecasts`
+              : "No matching forecasts"}
+          </span>
+          <div>
+            <button
+              className="button"
+              onClick={() => setPage((p) => p - 1)}
+              disabled={current <= 1}
+            >
+              Previous
+            </button>
+            <button
+              className="button"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={current >= pages}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </section>
     </>

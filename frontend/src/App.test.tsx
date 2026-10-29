@@ -7,6 +7,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import App from "./App";
+import Backtesting from "./Backtesting";
+import { forecastCsv } from "./ui";
 import type { Model, Research } from "./types";
 
 vi.mock("./Chart", () => ({
@@ -93,6 +95,7 @@ const fixture: Research = {
   },
 };
 beforeEach(() => {
+  window.history.replaceState(null, "", "/");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string) => {
@@ -136,6 +139,80 @@ afterEach(() => {
 });
 
 describe("dashboard integration with the API contract (mocked responses)", () => {
+  it("pins market and history requests to the same resolved experiment", async () => {
+    render(<App />);
+    await screen.findByText("$600.00");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/backtests?run_id=test-run",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/market?run_id=test-run",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+  it("changes the headline model and switches to the price view", async () => {
+    render(<App />);
+    await screen.findByText("$600.00");
+    fireEvent.change(screen.getByLabelText("Overview forecast model"), {
+      target: { value: "persistence" },
+    });
+    expect(screen.getByText("Persistence estimate")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "SPY price" }));
+    expect(
+      screen.getByRole("img", { name: "SPY closing price history" }),
+    ).toBeInTheDocument();
+  });
+  it("disables exporting old data while a reload is in flight", async () => {
+    render(<App />);
+    await screen.findByText("$600.00");
+    expect(
+      screen.getByRole("button", { name: "Export full experiment" }),
+    ).toBeEnabled();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reload results" }));
+    expect(
+      screen.getByRole("button", { name: "Export full experiment" }),
+    ).toBeDisabled();
+  });
+  it("keeps market data useful when no experiment exists", async () => {
+    const saved = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string, options: RequestInit) =>
+        path.includes("/research")
+          ? Promise.resolve({
+              ok: false,
+              json: async () => ({ detail: "No experiment" }),
+            })
+          : saved(path, options),
+      ),
+    );
+    render(<App />);
+    expect(await screen.findByText("$600.00")).toBeInTheDocument();
+    expect(screen.getByText(/Market data are available/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Overview forecast model")).toBeDisabled();
+  });
+  it("exports unambiguous units and only the selected rows", () => {
+    const row = {
+      origin: "2026-01-02",
+      target_end: "2026-01-09",
+      model: "xgboost" as const,
+      prediction: 0.2,
+      actual: 0.18,
+      raw_prediction: 0.2,
+      regime: "calm",
+      train_label_end: null,
+    };
+    const csv = forecastCsv([row]);
+    const lines = csv.split("\r\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("error_percentage_points");
+    expect(Number(lines[1].split(",")[5])).toBeCloseTo(2);
+  });
   it("renders market data, switches history windows, and toggles models", async () => {
     render(<App />);
     expect(await screen.findByText("$600.00")).toBeInTheDocument();
@@ -200,5 +277,39 @@ describe("dashboard integration with the API contract (mocked responses)", () =>
       expect(screen.getByRole("alert")).toHaveTextContent("No actual data"),
     );
     expect(screen.queryByText("$600.00")).not.toBeInTheDocument();
+  });
+});
+
+describe("reviewed navigation and forecast pagination", () => {
+  it("restores the overview when browser history returns to the root URL", async () => {
+    render(<App />);
+    await screen.findByText("$600.00");
+    fireEvent.click(screen.getByRole("button", { name: "Model comparison" }));
+    window.history.replaceState(null, "", "/");
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Market overview" }),
+    ).toBeInTheDocument();
+  });
+  it("paginates the entire selected history and resets the page when dates change", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      origin: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+      target_end: "2026-02-01",
+      model: "xgboost" as const,
+      prediction: 0.12,
+      actual: 0.1,
+      raw_prediction: 0.12,
+      regime: "calm",
+      train_label_end: null,
+    }));
+    render(<Backtesting research={fixture} predictions={rows} />);
+    expect(screen.getByText("1–15 of 20 forecasts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("16–20 of 20 forecasts")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Origin from"), {
+      target: { value: "2026-01-19" },
+    });
+    expect(screen.getByText("1–2 of 2 forecasts")).toBeInTheDocument();
   });
 });

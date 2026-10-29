@@ -1,6 +1,7 @@
 """Common forecast contract; downloaded TimesFM weights stay local."""
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,12 @@ class Forecast:
     path: list[float] | None = None
     lower: list[float] | None = None
     upper: list[float] | None = None
+
+    def __post_init__(self):
+        if not np.isfinite([self.value, self.raw_value, self.latency_ms]).all():
+            raise ValueError("Forecasts and inference latency must be finite.")
+        if self.value < 0 or self.latency_ms < 0:
+            raise ValueError("Published volatility and latency cannot be negative.")
 
 
 class Forecaster(Protocol):
@@ -93,6 +100,8 @@ class TimesFM3Forecaster:
         threads: int = 4,
         revision: str | None = None,
     ):
+        if not 32 <= context_length <= 15360 or batch_size < 1 or threads < 1:
+            raise ValueError("Invalid TimesFM context length, batch size, or thread count.")
         self.cache_dir = cache_dir
         self.context_length = context_length
         self.batch_size = batch_size
@@ -116,12 +125,17 @@ class TimesFM3Forecaster:
         revision_path = self.cache_dir / "checkpoint_revision.json"
         if self.revision is None:
             if revision_path.exists():
-                self.revision = json.loads(revision_path.read_text())["revision"]
+                saved = json.loads(revision_path.read_text())
+                if saved.get("checkpoint") != CHECKPOINT:
+                    raise ValueError("Cached checkpoint identity does not match TimesFM 3.")
+                self.revision = saved["revision"]
             else:
                 self.revision = HfApi().model_info(CHECKPOINT).sha
                 revision_path.write_text(
                     json.dumps({"checkpoint": CHECKPOINT, "revision": self.revision})
                 )
+        if not re.fullmatch(r"[a-f0-9]{40}", self.revision or ""):
+            self.revision = HfApi().model_info(CHECKPOINT, revision=self.revision).sha
         self._model = TimesFM3Evaluator(
             ModelConfig(
                 checkpoint_path=CHECKPOINT,
@@ -134,14 +148,21 @@ class TimesFM3Forecaster:
         self.load_ms = (time.perf_counter() - start) * 1000
 
     def predict_many(self, histories: list[pd.DataFrame]) -> list[Forecast]:
-        self.load()
-        contexts = [
-            h["rv5"].dropna().to_numpy(dtype=np.float32)[-self.context_length :] for h in histories
-        ]
+        if not histories:
+            return []
+        contexts = []
+        for history in histories:
+            values = history["rv5"].to_numpy(dtype=np.float32)
+            positions = np.flatnonzero(~np.isnan(values))
+            context = (
+                values[positions[0] :][-self.context_length :] if len(positions) else values[:0]
+            )
+            contexts.append(context)
         if any(len(c) < 32 or not np.isfinite(c).all() for c in contexts):
             raise ValueError(
                 "TimesFM requires at least 32 finite trailing-volatility observations."
             )
+        self.load()
         predictions = []
         for offset in range(0, len(contexts), self.batch_size):
             batch = contexts[offset : offset + self.batch_size]

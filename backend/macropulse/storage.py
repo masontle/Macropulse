@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from macropulse.evaluation import ExperimentResult
+from macropulse.data import load_verified_prices, process_prices
+from macropulse.evaluation import ExperimentResult, validate_predictions
 
 
 class ResearchStore:
@@ -39,6 +40,18 @@ class ResearchStore:
             con.close()
 
     def save(self, result: ExperimentResult):
+        validate_predictions(result.predictions)
+        columns = [
+            "origin",
+            "target_end",
+            "model",
+            "prediction",
+            "raw_prediction",
+            "actual",
+            "latency_ms",
+            "regime",
+            "train_label_end",
+        ]
         # One transaction: readers see either the prior complete experiment or this complete one.
         with self.connect() as con:
             con.execute(
@@ -55,7 +68,7 @@ class ResearchStore:
                 "INSERT INTO predictions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (result.metadata["run_id"], *row)
-                    for row in result.predictions.itertuples(index=False, name=None)
+                    for row in result.predictions[columns].itertuples(index=False, name=None)
                 ],
             )
 
@@ -96,5 +109,7 @@ class ResearchStore:
 
 
 def read_market(data_dir: Path) -> pd.DataFrame | None:
-    path = data_dir / "processed" / "spy.parquet"
-    return pd.read_parquet(path) if path.exists() else None
+    if not (data_dir / "raw" / "provenance.json").exists():
+        return None
+    prices, _ = load_verified_prices(data_dir)
+    return process_prices(prices)

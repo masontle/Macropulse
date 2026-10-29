@@ -83,3 +83,14 @@ def test_fingerprint_survives_parquet_timestamp_unit_conversion(prices, frame, t
         altered = reloaded.copy()
         altered.iloc[100, altered.columns.get_loc("close")] += 1
         assert frame_fingerprint(original) != frame_fingerprint(altered)
+
+
+def test_realized_volatility_is_not_demeaned_sample_standard_deviation():
+    dates = pd.bdate_range("2020-01-01", periods=80)
+    close = 100 * np.exp(np.arange(80) * 0.01)
+    data = pd.DataFrame({"adjusted_close": close, "close": close, "volume": 100}, index=dates)
+    calculated = process_prices(data)
+    # Constant nonzero returns still have nonzero realized quadratic variation.
+    expected = 0.01 * np.sqrt(252)
+    assert calculated["rv5"].iloc[20] == pytest.approx(expected)
+    assert calculated["target"].iloc[20] == pytest.approx(expected)

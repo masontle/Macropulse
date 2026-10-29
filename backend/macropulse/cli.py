@@ -9,9 +9,9 @@ from pathlib import Path
 import pandas as pd
 
 from macropulse.config import ROOT, settings
-from macropulse.data import download_prices, frame_fingerprint, process_prices
+from macropulse.data import DataError, download_prices, load_verified_prices, process_prices
 from macropulse.evaluation import ExperimentConfig, export_experiment, run_experiment
-from macropulse.storage import ResearchStore, read_market
+from macropulse.storage import ResearchStore
 
 
 def write_report(run: dict, path: Path, predictions: list[dict] | None = None):
@@ -122,7 +122,7 @@ def write_report(run: dict, path: Path, predictions: list[dict] | None = None):
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser(description="MacroPulse local research workflow")
     sub = parser.add_subparsers(dest="command", required=True)
     refresh = sub.add_parser("refresh", help="Download and validate actual SPY prices")
@@ -160,9 +160,7 @@ def main():
             snapshot = settings.data_dir / "raw" / f"spy-{provenance['sha256'][:16]}.parquet"
             if not snapshot.exists():
                 parser.error(f"Immutable snapshot is missing: {snapshot}")
-            raw_prices = pd.read_parquet(snapshot)
-            if frame_fingerprint(raw_prices) != provenance["sha256"]:
-                parser.error("Snapshot fingerprint mismatch; refusing to replay altered data")
+            raw_prices, provenance = load_verified_prices(settings.data_dir, provenance)
             frame = process_prices(raw_prices)
             cfg = ExperimentConfig.model_validate(meta["config"])
             cfg.checkpoint_revision = meta["models"].get("timesfm3", {}).get("checkpoint_revision")
@@ -172,12 +170,12 @@ def main():
                 cfg.include_timesfm = False
             if args.quick:
                 cfg.max_test_origins = 40
-            frame = read_market(settings.data_dir)
             provenance_path = settings.data_dir / "raw" / "provenance.json"
-            if frame is None or not provenance_path.exists():
+            if not provenance_path.exists():
                 frame, provenance = download_prices(settings.data_dir)
             else:
-                provenance = json.loads(provenance_path.read_text())
+                raw_prices, provenance = load_verified_prices(settings.data_dir)
+                frame = process_prices(raw_prices)
         result = run_experiment(frame, provenance, cfg, settings)
         result.metadata["environment"] = {"python": sys.version, "platform": platform.platform()}
         commit = subprocess.run(
@@ -245,6 +243,14 @@ def main():
                 indent=2,
             )
         )
+
+
+def main():
+    try:
+        _main()
+    except DataError as exc:
+        print(f"Market data validation failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

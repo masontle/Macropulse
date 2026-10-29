@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from macropulse.config import Settings, settings
+from macropulse.data import DataError, completed_sessions, load_verified_prices, process_prices
 from macropulse.storage import ResearchStore, read_market
 
 
@@ -28,6 +30,9 @@ class MarketResponse(BaseModel):
     symbol: str
     data: list[MarketRow]
     last_session: str
+    expected_session: str | None = None
+    stale: bool = False
+    snapshot: str = "current"
 
 
 class StatusResponse(BaseModel):
@@ -37,6 +42,8 @@ class StatusResponse(BaseModel):
     last_session: str | None
     run_id: str | None
     models: dict[str, Any]
+    market_stale: bool = False
+    latest_completed_session: str | None = None
 
 
 class ResearchResponse(BaseModel):
@@ -75,6 +82,10 @@ def create_app(config: Settings | None = None) -> FastAPI:
     )
     store = ResearchStore(config.database)
 
+    @app.exception_handler(DataError)
+    def invalid_dataset(request: Request, exc: DataError):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
     def require_run(run_id: str | None = None):
         run = store.latest(run_id)
         if run is None:
@@ -89,24 +100,42 @@ def create_app(config: Settings | None = None) -> FastAPI:
     def status():
         market = read_market(config.data_dir)
         run = store.latest()
+        sessions = completed_sessions("2015-01-01")
+        expected = sessions[-1].strftime("%Y-%m-%d") if len(sessions) else None
+        last = market.index[-1].strftime("%Y-%m-%d") if market is not None else None
+        stale = bool(last and expected and last < expected)
         return {
-            "status": "ready" if market is not None and run else "setup_required",
+            "status": ("stale" if stale else "ready")
+            if market is not None and run
+            else "setup_required",
             "market_available": market is not None,
             "experiment_available": run is not None,
             "last_session": market.index[-1].strftime("%Y-%m-%d") if market is not None else None,
             "run_id": run["metadata"]["run_id"] if run else None,
             "models": run["metadata"]["models"] if run else {},
+            "market_stale": stale,
+            "latest_completed_session": expected,
         }
 
     @app.get("/api/market", response_model=MarketResponse)
     def market(
-        start: date | None = None, end: date | None = None, limit: int = Query(4000, ge=1, le=10000)
+        start: date | None = None,
+        end: date | None = None,
+        limit: int = Query(4000, ge=1, le=10000),
+        run_id: str | None = None,
     ):
         check_range(start, end)
-        frame = read_market(config.data_dir)
+        if run_id:
+            provenance = require_run(run_id)["metadata"]["provenance"]
+            prices, _ = load_verified_prices(config.data_dir, provenance)
+            frame = process_prices(prices)
+        else:
+            frame = read_market(config.data_dir)
         if frame is None:
             raise HTTPException(503, "Market data unavailable. Run: macropulse refresh")
         last = frame.index[-1].strftime("%Y-%m-%d")
+        sessions = completed_sessions("2015-01-01")
+        expected = sessions[-1].strftime("%Y-%m-%d") if len(sessions) else last
         if start:
             frame = frame.loc[str(start) :]
         if end:
@@ -119,6 +148,9 @@ def create_app(config: Settings | None = None) -> FastAPI:
         return {
             "symbol": "SPY",
             "last_session": last,
+            "expected_session": expected,
+            "stale": last < expected,
+            "snapshot": "experiment" if run_id else "current",
             "data": [
                 {
                     "date": idx.strftime("%Y-%m-%d"),

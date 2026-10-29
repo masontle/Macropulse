@@ -1,5 +1,50 @@
 import { ArrowDownRight, ArrowUpRight, CircleHelp } from "lucide-react";
-import type { Model, Score } from "./types";
+import type { Model, Prediction, Score } from "./types";
+
+export function forecastCsv(rows: Prediction[]): string {
+  return [
+    "origin,target_end,model,prediction_annualized_decimal,actual_annualized_decimal,error_percentage_points,regime",
+    ...rows.map((p) =>
+      [
+        p.origin,
+        p.target_end,
+        p.model,
+        p.prediction,
+        p.actual,
+        (p.prediction - p.actual) * 100,
+        p.regime,
+      ].join(","),
+    ),
+  ].join("\r\n");
+}
+export function downloadForecasts(rows: Prediction[], name: string) {
+  const url = URL.createObjectURL(
+    new Blob([forecastCsv(rows)], { type: "text/csv;charset=utf-8;" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `macropulse-${name.replace(/[^a-zA-Z0-9_-]/g, "_")}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export function InfoTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: string;
+}) {
+  return (
+    <details className="info-tip">
+      <summary aria-label={`Explain ${label}`}>
+        <CircleHelp size={15} />
+      </summary>
+      <span role="note">{children}</span>
+    </details>
+  );
+}
 
 export const names: Record<Model, string> = {
   timesfm3: "TimesFM 3",
@@ -17,7 +62,9 @@ export const pct = (v: number | null | undefined, digits = 2) =>
 export const pp = (v: number) => `${(v * 100).toFixed(2)}`;
 export const dateLabel = (value: string | undefined) =>
   value
-    ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", {
+    ? new Date(
+        value.length > 10 ? value : `${value}T12:00:00`,
+      ).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",
@@ -34,18 +81,20 @@ export function Metric({
   caption,
   accent = false,
   change,
+  help,
 }: {
   title: string;
   value: string;
   caption: string;
   accent?: boolean;
   change?: number | null;
+  help?: string;
 }) {
   return (
     <article className={`metric ${accent ? "metric-accent" : ""}`}>
       <div className="metric-label">
         {title}
-        <CircleHelp size={13} aria-hidden="true" />
+        {help && <InfoTip label={title}>{help}</InfoTip>}
       </div>
       <div className="metric-value">{value}</div>
       <div className="metric-caption">
@@ -82,6 +131,7 @@ export function ScoreTable({ scores }: { scores: Score[] }) {
               BIAS <small>pp</small>
             </th>
             <th>VS. BASELINE</th>
+            <th>FORECASTS</th>
             <th>LATENCY</th>
           </tr>
         </thead>
@@ -111,6 +161,7 @@ export function ScoreTable({ scores }: { scores: Score[] }) {
                     ? "—"
                     : `${s.improvement_pct > 0 ? "+" : ""}${s.improvement_pct.toFixed(1)}%`}
                 </td>
+                <td className="numeric muted">{s.n}</td>
                 <td className="numeric muted">
                   {s.latency_ms < 1 ? "<1" : s.latency_ms.toFixed(0)} ms
                 </td>
