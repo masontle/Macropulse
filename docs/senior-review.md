@@ -108,3 +108,20 @@ same final test window would weaken the research, so it was deliberately avoided
 Official references consulted:
 [scikit-learn time-series splitting](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html)
 and [XGBoost's Python API](https://xgboost.readthedocs.io/en/stable/python/python_api.html).
+
+## Final local verification
+
+- 45 backend unit/regression tests passed; the ordinary suite skips one opt-in integration test.
+- The separate genuine TimesFM 3 checkpoint integration test passed on actual downloaded SPY history.
+- 11 frontend interaction/contract tests passed; TypeScript, production build, Ruff lint/formatting,
+  Python dependency checks, and the npm audit passed (zero npm vulnerabilities).
+- The audited full run `20261029T172722Z-e5e6cb51` reproduced all 423 historical prediction rows
+  bit-for-bit against the original run, excluding timing and run identifiers.
+- All three models used the same 141 test origins. MAE remains XGBoost 4.118 pp,
+  TimesFM 3 4.810 pp, persistence 5.335 pp. No superiority claim was introduced.
+- 300 validation prediction rows (three candidates across 100 origins) are saved in
+  `reports/reference/validation_predictions.csv` to audit parameter selection.
+- Live browser checks verified model selection, regime/year filtering, full-history pagination,
+  mobile navigation, and a real CSV download containing exactly the selected 50 forecasts.
+- The chart vendor chunk remains large but is deferred. Upstream Pandas/calendar deprecation
+  warnings remain; neither issue blocked the tested application.

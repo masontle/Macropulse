@@ -956,3 +956,12 @@ main:focus {
     touch-action: manipulation;
   }
 }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+main {
+  scroll-margin-top: 90px;
+}

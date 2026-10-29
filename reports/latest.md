@@ -1,6 +1,6 @@
 # MacroPulse measured results
 
-Run: `20261029T031742Z-81e4796a`
+Run: `20261029T172722Z-e5e6cb51`
 
 Data: Yahoo Finance via yfinance; through 2026-10-28.
 Test: 2024-01-02 to 2026-10-16 (141 non-overlapping origins).
@@ -9,9 +9,9 @@ All volatility errors below are annualized percentage points (decimal errors × 
 
 | Model | MAE (pp) | RMSE (pp) | Bias (pp) | MAE improvement | Prediction ms |
 |---|---:|---:|---:|---:|---:|
-| xgboost | 4.118 | 7.351 | 0.431 | 22.82% | 7.56 |
-| timesfm3 | 4.810 | 7.384 | -0.517 | 9.85% | 167.96 |
-| persistence | 5.335 | 8.380 | -0.036 | 0.00% | 0.04 |
+| xgboost | 4.118 | 7.351 | 0.431 | 22.82% | 9.74 |
+| timesfm3 | 4.810 | 7.384 | -0.517 | 9.85% | 144.06 |
+| persistence | 5.335 | 8.380 | -0.036 | 0.00% | 0.05 |
 
 ## Model availability
 
@@ -38,7 +38,7 @@ All volatility errors below are annualized percentage points (decimal errors × 
     "context_length": 256,
     "batch_size": 4,
     "device": "cpu",
-    "load_ms": 7808.373199979542,
+    "load_ms": 31511.504199996125,
     "license": "timesfm-non-commercial-license-v1.0",
     "negative_handling": "clip point forecast and quantiles at zero; retain raw endpoint for evaluation",
     "interval": "10th\u201390th model quantiles, not a calibrated confidence interval"
