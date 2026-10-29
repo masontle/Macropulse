@@ -1,0 +1,10 @@
+{
+  "original_run": "20261029T030633Z-b22e026a",
+  "replayed_run": "20261029T031742Z-81e4796a",
+  "matched_prediction_rows": 423,
+  "historical_prediction_comparison": "bit-for-bit identical (excluding timing and run IDs)",
+  "source_commit": "14b61267aca23a4823b60a143e70b8b740c7993e",
+  "source_was_clean": true,
+  "raw_snapshot_sha256": "fe69a3fcd21d7c8d756568235b4c2e0b022340b9d6f133d1dbed8dbed4914d2c",
+  "weight_revision": "43046b85ec22d584a13f8098c2ed39c889e129c2"
+}
