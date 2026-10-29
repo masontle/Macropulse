@@ -5,9 +5,10 @@
 *.pem
 *.key
 
-# Python
+# Python and development tools
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/
@@ -21,17 +22,15 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Local datasets, model weights, and generated results
+# Datasets, model weights, caches, and local state
 /data/
 /models/
 /checkpoints/
 /results/
 *.db
-*.sqlite
-*.sqlite3
+*.sqlite*
 *.parquet
-
-# System and editor files
+*.log
 .DS_Store
 Thumbs.db
 .idea/

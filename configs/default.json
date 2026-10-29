@@ -1,0 +1,16 @@
+{
+  "validation_start": "2022-01-01",
+  "test_start": "2024-01-01",
+  "origin_stride": 5,
+  "refit_every": 20,
+  "max_test_origins": null,
+  "include_timesfm": true,
+  "context_length": 256,
+  "batch_size": 4,
+  "checkpoint_revision": null,
+  "candidates": [
+    {"max_depth": 2, "n_estimators": 150, "learning_rate": 0.03},
+    {"max_depth": 3, "n_estimators": 200, "learning_rate": 0.03},
+    {"max_depth": 2, "n_estimators": 250, "learning_rate": 0.02}
+  ]
+}

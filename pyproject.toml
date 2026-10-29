@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macropulse"
+version = "0.1.0"
+description = "Local financial volatility forecasting research platform"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1",
+  "pandas>=2.2,<4", "numpy>=1.26,<3", "scikit-learn>=1.6,<2",
+  "xgboost>=3,<4", "pyarrow>=19,<24", "yfinance>=0.2.65,<2",
+  "exchange-calendars>=4.7,<5", "pydantic-settings>=2.7,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
+timesfm = ["timesfm[torch] @ git+https://github.com/google-research/timesfm.git@e51928e27119cb17bebc005be2696b75e0a9e688"]
+
+[project.scripts]
+macropulse = "macropulse.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: real network or pretrained-weight integration tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

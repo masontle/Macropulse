@@ -348,3 +348,266 @@ Display:
 - Relative improvements
 - Forecast errors
 - Model rankings
+
+Build interactive charts comparing forecasted and actual volatility.
+
+## DASHBOARD PAGE 3: HISTORICAL BACKTESTING
+
+Allow users to:
+- Inspect historical forecasts
+- Compare predictions against realized outcomes
+- Select evaluation periods
+- Examine forecasting errors
+- Identify periods of strong and weak model performance
+
+Include clear explanations of the backtesting methodology.
+
+## DASHBOARD PAGE 4: RESEARCH & METHODOLOGY
+
+Explain:
+- The research question
+- What realized volatility means
+- What TimesFM 3 is
+- How XGBoost works
+- How the evaluation was conducted
+- How look-ahead bias was prevented
+- Experimental results
+- Model limitations
+
+The dashboard should remain useful even if a model is unavailable.
+
+Never display fake performance statistics.
+
+Do not confuse simulated example charts with actual research results.
+
+---
+
+# 9. EXPERIMENT TRACKING AND REPRODUCIBILITY
+
+Create a lightweight, reproducible research workflow.
+
+Include:
+- Experiment configuration files
+- Model hyperparameter records
+- Random seeds
+- Dataset provenance
+- Model version information
+- Forecast timestamps
+- Evaluation results
+- Saved prediction artifacts
+- Reproduction commands
+
+Make it possible to rerun an experiment and understand exactly how the reported results were produced.
+
+Avoid introducing unnecessary MLOps infrastructure.
+
+---
+
+# 10. TESTING AND VALIDATION
+
+Implement meaningful automated tests.
+
+Required testing areas:
+
+FINANCIAL CALCULATIONS
+- Logarithmic returns
+- Trailing volatility
+- Forward volatility labels
+- Annualization
+- Date indexing
+
+MACHINE LEARNING
+- Feature alignment
+- Target alignment
+- Chronological splits
+- Leakage prevention
+- Consistent forecasting horizons
+- Correct evaluation metrics
+
+BACKEND
+- API responses
+- Error handling
+- Data validation
+
+FRONTEND
+- Build verification
+- API integration
+- Critical dashboard interactions
+
+Run actual tests.
+
+Fix discovered defects.
+
+Do not claim tests passed unless they were executed successfully.
+
+Where model downloads or expensive inference prevent testing, distinguish mocked unit tests from genuine integration tests.
+
+---
+
+# 11. PERFORMANCE AND RESOURCE MANAGEMENT
+
+Inspect the available development environment.
+
+Identify:
+- Operating system
+- Python version
+- Available RAM
+- GPU availability
+- Available disk space
+- Dependency constraints
+
+Adapt the implementation accordingly.
+
+Do not assume an NVIDIA GPU is available.
+
+Use efficient caching, limited batch sizes, and sensible forecast sampling.
+
+Avoid unnecessarily repeating expensive TimesFM inference.
+
+If full historical evaluation is too computationally expensive, run a smaller genuine evaluation first, then provide a clearly documented command for the complete experiment.
+
+Never silently substitute synthetic results.
+
+---
+
+# 12. GITHUB AND DOCUMENTATION
+
+Create a professional GitHub-ready repository.
+
+Include:
+
+README.md:
+- Project overview
+- Research question
+- Key features
+- Architecture
+- Technology stack
+- Setup instructions
+- Running the application
+- Running experiments
+- Testing instructions
+- Actual results, if available
+- Limitations
+- Future improvements
+
+Also include:
+- .gitignore
+- Environment configuration examples
+- Dependency files
+- Appropriate license notices
+- Architecture documentation
+- GitHub Actions workflow
+- Clear code comments where necessary
+
+Do not commit:
+- Credentials
+- Large pretrained model weights
+- Virtual environments
+- Download caches
+- Unnecessary large datasets
+
+If Git is available, make logical commits after successful major milestones. Do not force-push or overwrite remote history.
+
+---
+
+# 13. IMPLEMENTATION STRATEGY
+
+You are authorized to carry out the complete development process autonomously within this repository.
+
+Follow this order:
+
+PHASE 1:
+Inspect environment, verify dependencies and official documentation, and formulate the architecture.
+
+PHASE 2:
+Implement the financial data pipeline.
+
+PHASE 3:
+Implement genuine TimesFM 3 inference.
+
+PHASE 4:
+Implement XGBoost and naïve baselines.
+
+PHASE 5:
+Implement the backtesting and evaluation framework.
+
+PHASE 6:
+Implement the FastAPI backend.
+
+PHASE 7:
+Implement the React frontend.
+
+PHASE 8:
+Integrate all components.
+
+PHASE 9:
+Run tests and debug failures.
+
+PHASE 10:
+Polish the application, documentation, and user experience.
+
+You may internally create a development plan and track progress.
+
+However, DO NOT stop after writing the plan.
+
+Proceed into implementation automatically.
+
+Continue from one phase to the next without waiting for routine approval.
+
+Make reasonable design decisions independently.
+
+If you encounter errors:
+1. Inspect the actual error.
+2. Identify the root cause.
+3. Implement the appropriate correction.
+4. Rerun the relevant tests.
+5. Continue development.
+
+Do not use fake data or placeholder predictions to conceal implementation problems.
+
+If external downloads, permissions, or environment restrictions block a task, continue implementing independently testable components and record the blocker.
+
+Do not install paid services or perform destructive operations.
+
+---
+
+# 14. DEFINITION OF DONE
+
+The project is complete when:
+
+1. The repository contains working application code.
+2. Actual SPY financial data can be downloaded and processed.
+3. Forward realized volatility labels are calculated correctly.
+4. All three forecasting models are implemented.
+5. Genuine TimesFM 3 inference has been verified where the environment permits.
+6. Historical backtesting runs without detected leakage.
+7. Model comparison metrics are calculated from actual predictions.
+8. FastAPI exposes real stored results.
+9. The React dashboard can communicate with the backend.
+10. The frontend renders the financial charts correctly.
+11. Automated tests and build checks have been executed.
+12. Documentation explains how to reproduce the project.
+13. The application can be launched locally with documented commands.
+
+If any criteria cannot be fulfilled, clearly identify the incomplete items rather than claiming full completion.
+
+---
+
+# 15. FINAL DELIVERY
+
+After implementation, provide:
+
+1. A summary of what was built.
+2. The final repository structure.
+3. Exact commands to install and run the application.
+4. Exact commands to reproduce the ML experiments.
+5. Confirmation of which models were actually executed.
+6. Actual measured evaluation metrics, if available.
+7. Tests that passed, failed, or could not run.
+8. Any remaining limitations.
+9. Recommended next improvements.
+10. A concise description suitable for a technical portfolio.
+
+Prioritize correctness, reproducibility, genuine machine-learning experimentation, clean architecture, and a polished user experience.
+
+**BEGIN BUILDING MACROPULSE NOW. DO NOT STOP AT PLANNING.**
