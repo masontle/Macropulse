@@ -965,3 +965,15 @@ main:focus {
 main {
   scroll-margin-top: 90px;
 }
+
+@media (max-width: 600px) {
+  .info-tip > span {
+    position: fixed;
+    left: 18px;
+    right: 18px;
+    top: auto;
+    bottom: 22px;
+    width: auto;
+    z-index: 60;
+  }
+}
